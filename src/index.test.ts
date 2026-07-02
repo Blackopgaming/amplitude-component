@@ -84,6 +84,24 @@ describe('required property gate (environment + brand)', () => {
     expect(body.events[0].event_properties.brand).toBe('acme')
   })
 
+  it('maps payload.time_ms to the reserved top-level time field', async () => {
+    const { listeners, fetch } = await setup()
+    const timeMs = 1718000000000
+    await listeners.event(
+      createEvent({
+        event_type: 'wager_placed',
+        environment: 'production',
+        brand: 'acme',
+        time_ms: timeMs,
+      })
+    )
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const body = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(body.events[0].time).toBe(timeMs)
+    // time_ms is intentionally not deleted, so it also lands in event_properties
+    expect(body.events[0].event_properties.time_ms).toBe(timeMs)
+  })
+
   it('sends pageview events with both properties present', async () => {
     const { listeners, fetch } = await setup()
     await listeners.pageview(

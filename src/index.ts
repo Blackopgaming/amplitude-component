@@ -86,6 +86,7 @@ export default async function (manager: Manager, settings: ComponentSettings) {
       ...(payload.insert_id && {
         insert_id: payload.insert_id,
       }),
+      ...(payload.time_ms && { time: payload.time_ms }),
       ...(payload.revenue && { revenue: payload.revenue }),
       ...(payload.revenueType && { revenueType: payload.revenueType }),
       ...(payload.productId && { productId: payload.productId }),
