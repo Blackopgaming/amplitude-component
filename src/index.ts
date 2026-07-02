@@ -41,6 +41,15 @@ const getEventId = (event: MCEvent) => {
   client.set('event_id', eventId.toString(), { scope: 'infinite' })
 }
 
+// Required properties every incoming call must carry. Calls missing either
+// `environment` or `brand` are dropped before any processing or network I/O.
+// Ecommerce calls may nest their properties under `payload.ecommerce`
+// (mirroring the merge done in ecomDataMap), so check both levels.
+const hasRequiredProperties = (event: MCEvent): boolean => {
+  const payload = { ...event.payload, ...event.payload.ecommerce }
+  return Boolean(payload.environment) && Boolean(payload.brand)
+}
+
 export default async function (manager: Manager, settings: ComponentSettings) {
   const getEventData = (
     event: MCEvent,
@@ -119,18 +128,21 @@ export default async function (manager: Manager, settings: ComponentSettings) {
   }
 
   manager.addEventListener('pageview', async event => {
+    if (!hasRequiredProperties(event)) return
     const isEUEndpoint = !!event.payload.eu_data
     const eventData = getEventData(event, true)
     sendEvent(eventData, isEUEndpoint)
   })
 
   manager.addEventListener('event', async event => {
+    if (!hasRequiredProperties(event)) return
     const isEUEndpoint = !!event.payload.eu_data
     const eventData = getEventData(event, false)
     sendEvent(eventData, isEUEndpoint)
   })
 
   manager.addEventListener('ecommerce', async event => {
+    if (!hasRequiredProperties(event)) return
     const isEUEndpoint = !!event.payload.eu_data
     const ecomPayload = ecomDataMap(event)
     const eventData = getEventData(event, false, ecomPayload)
