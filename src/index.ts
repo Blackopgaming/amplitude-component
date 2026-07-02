@@ -10,15 +10,28 @@ const getUserId = (event: MCEvent): string | null => {
   return userId
 }
 
-// Get the device ID stored in the client, if it does not exist, make a random one, save it in the client, and return it.
-const getDeviceId = (event: MCEvent) => {
+// Resolve the device ID: prefer an explicit payload value, then the ID
+// persisted in the client (browser cookie). If neither exists and the event
+// carries a user_id (typical for server-side calls, where there is no cookie
+// jar to persist anything in), omit the device ID entirely so Amplitude
+// derives a stable one by hashing the user_id. Only fabricate and persist a
+// random UUID for anonymous events, where Amplitude requires at least one ID.
+const getDeviceId = (
+  event: MCEvent,
+  payload: any,
+  userId: string | null
+): string | null => {
   const { client } = event
-  let deviceId = event.payload.device_id || client.get('device_id')
-  if (!deviceId) {
-    deviceId = crypto.randomUUID()
-    client.set('device_id', deviceId, { scope: 'infinite' })
+  const deviceId = payload.device_id || client.get('device_id')
+  if (deviceId) {
+    return deviceId
   }
-  return deviceId
+  if (userId) {
+    return null
+  }
+  const newDeviceId = crypto.randomUUID()
+  client.set('device_id', newDeviceId, { scope: 'infinite' })
+  return newDeviceId
 }
 
 // Get the session ID stored in the client, if it does not exist, make a new one, save it in the client, and return it.
@@ -61,6 +74,7 @@ export default async function (manager: Manager, settings: ComponentSettings) {
     const payload = ecomPayload ? ecomPayload : event.payload
     // eventData builds the eventData object to be used in the request body
     const userId = getUserId(event)
+    const deviceId = getDeviceId(event, payload, userId)
     delete payload.eu_data
 
     const eventData = {
@@ -79,7 +93,7 @@ export default async function (manager: Manager, settings: ComponentSettings) {
       os_version: parsedUserAgent.os.version,
       device_manufacturer: parsedUserAgent.device.vendor,
       device_model: parsedUserAgent.device.model,
-      device_id: getDeviceId(event),
+      ...(deviceId && { device_id: deviceId }),
       ...(payload.app_version && {
         app_version: payload.app_version,
       }),

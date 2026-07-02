@@ -148,6 +148,71 @@ describe('required property gate (environment + brand)', () => {
     expect(body.events[0].event_properties.brand).toBe('acme')
   })
 
+  it('omits device_id when the event has a user_id and no known device', async () => {
+    const { listeners, fetch } = await setup()
+    const event = createEvent({
+      event_type: 'wager_placed',
+      environment: 'production',
+      brand: 'acme',
+      user_id: 'user-123',
+    })
+    await listeners.event(event)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const body = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(body.events[0].user_id).toBe('user-123')
+    expect(body.events[0]).not.toHaveProperty('device_id')
+    expect(event.client.set).not.toHaveBeenCalledWith(
+      'device_id',
+      expect.anything(),
+      expect.anything()
+    )
+  })
+
+  it('uses the device_id provided in the payload over everything else', async () => {
+    const { listeners, fetch } = await setup()
+    await listeners.event(
+      createEvent({
+        event_type: 'signup',
+        environment: 'production',
+        brand: 'acme',
+        user_id: 'user-123',
+        device_id: 'device-from-payload',
+      })
+    )
+    const body = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(body.events[0].device_id).toBe('device-from-payload')
+  })
+
+  it('uses the device_id persisted in the client for frontend events', async () => {
+    const { listeners, fetch } = await setup()
+    const event = createEvent({
+      event_type: 'signup',
+      environment: 'production',
+      brand: 'acme',
+      user_id: 'user-123',
+    })
+    event.client.set('device_id', 'device-from-cookie')
+    await listeners.event(event)
+    const body = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(body.events[0].device_id).toBe('device-from-cookie')
+  })
+
+  it('generates and persists a device_id for anonymous events', async () => {
+    const { listeners, fetch } = await setup()
+    const event = createEvent(
+      { environment: 'production', brand: 'acme' },
+      'pageview'
+    )
+    await listeners.pageview(event)
+    const body = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(body.events[0].device_id).toMatch(/[0-9a-f-]{36}/)
+    expect(event.client.set).toHaveBeenCalledWith(
+      'device_id',
+      body.events[0].device_id,
+      { scope: 'infinite' }
+    )
+  })
+
   it('accepts ecommerce events with environment and brand at the top level', async () => {
     const { listeners, fetch } = await setup()
     await listeners.ecommerce(
