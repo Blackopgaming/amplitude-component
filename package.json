@@ -8,7 +8,8 @@
     "lint": "eslint --ext .ts,.js, src",
     "lint:fix": "eslint --ext .ts,.js, src --fix",
     "bundle": "node esbuild.js",
-    "build": "run-s test lint typecheck bundle",
+    "worker:bundle": "node -e \"require('fs').copyFileSync('dist/index.js','worker/src/component.js')\"",
+    "build": "run-s test lint typecheck bundle worker:bundle",
     "release": "npm run build && npm version patch && npm publish",
     "typecheck": "tsc --project tsconfig.build.json --noEmit",
     "test": "vitest run --globals --passWithNoTests",
@@ -30,6 +31,7 @@
   },
   "homepage": "https://github.com/managed-components/amplitude#readme",
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260702.1",
     "@managed-components/types": "^1.3.2",
     "@types/ua-parser-js": "^0.7.36",
     "@typescript-eslint/eslint-plugin": "^5.27.0",
@@ -42,7 +44,8 @@
     "rimraf": "^3.0.2",
     "ts-node": "^10.8.0",
     "typescript": "^4.7.2",
-    "vitest": "^0.13.0"
+    "vitest": "^0.13.0",
+    "wrangler": "^4.107.0"
   },
   "dependencies": {
     "ua-parser-js": "^1.0.35"

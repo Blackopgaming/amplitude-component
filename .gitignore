@@ -144,3 +144,6 @@ dist
 # End of https://www.toptal.com/developers/gitignore/api/node
 
 .vscode
+
+# Build artifact: the MC bundle copied into the worker wrapper
+worker/src/component.js
