@@ -5,7 +5,7 @@ type Listener = (event: any) => Promise<void> | void
 
 const createMocks = () => {
   const listeners: Record<string, Listener> = {}
-  const fetch = vi.fn()
+  const fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 })
   const manager = {
     addEventListener: (type: string, listener: Listener) => {
       listeners[type] = listener
@@ -227,5 +227,70 @@ describe('required property gate (environment + brand)', () => {
       )
     )
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('delivery retry (LAKA-511)', () => {
+  const okEvent = () =>
+    createEvent({
+      event_type: 'signup',
+      environment: 'production',
+      brand: 'acme',
+    })
+
+  it('retries a 5xx and succeeds on the second attempt', async () => {
+    const { listeners, fetch } = await setup()
+    fetch.mockResolvedValueOnce({ ok: false, status: 500 })
+    await listeners.event(okEvent())
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a 429', async () => {
+    const { listeners, fetch } = await setup()
+    fetch.mockResolvedValueOnce({ ok: false, status: 429 })
+    await listeners.event(okEvent())
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a network rejection', async () => {
+    const { listeners, fetch } = await setup()
+    fetch.mockRejectedValueOnce(new Error('connection reset'))
+    await listeners.event(okEvent())
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('gives up after 3 attempts', async () => {
+    const { listeners, fetch } = await setup()
+    fetch.mockResolvedValue({ ok: false, status: 503 })
+    await listeners.event(okEvent())
+    expect(fetch).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not retry a permanent 4xx rejection', async () => {
+    const { listeners, fetch } = await setup()
+    fetch.mockResolvedValue({ ok: false, status: 400 })
+    await listeners.event(okEvent())
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends the same body on each retry', async () => {
+    const { listeners, fetch } = await setup()
+    fetch.mockResolvedValueOnce({ ok: false, status: 500 })
+    await listeners.event(okEvent())
+    expect(fetch.mock.calls[0][1].body).toBe(fetch.mock.calls[1][1].body)
+  })
+})
+
+describe('event_id (LAKA-511 secondary)', () => {
+  it('sends an incrementing numeric event_id', async () => {
+    const { listeners, fetch } = await setup()
+    const event = createEvent({
+      event_type: 'signup',
+      environment: 'production',
+      brand: 'acme',
+    })
+    await listeners.event(event)
+    const body = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(body.events[0].event_id).toBe(2)
   })
 })

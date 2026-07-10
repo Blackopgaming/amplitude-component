@@ -52,6 +52,7 @@ const getEventId = (event: MCEvent) => {
   let eventId = parseInt(client.get('event_id') as string) || 1
   eventId++
   client.set('event_id', eventId.toString(), { scope: 'infinite' })
+  return eventId
 }
 
 // Required properties every incoming call must carry. Calls missing either
@@ -60,7 +61,14 @@ const getEventId = (event: MCEvent) => {
 // (mirroring the merge done in ecomDataMap), so check both levels.
 const hasRequiredProperties = (event: MCEvent): boolean => {
   const payload = { ...event.payload, ...event.payload.ecommerce }
-  return Boolean(payload.environment) && Boolean(payload.brand)
+  const ok = Boolean(payload.environment) && Boolean(payload.brand)
+  if (!ok) {
+    console.debug(
+      'amplitude: dropping event missing environment/brand:',
+      payload.event_type
+    )
+  }
+  return ok
 }
 
 export default async function (manager: Manager, settings: ComponentSettings) {
@@ -142,18 +150,21 @@ export default async function (manager: Manager, settings: ComponentSettings) {
     return payload
   }
 
+  // Listeners await sendEvent so its retry loop runs inside the listener
+  // dispatch the worker awaits (worker/src/handler.ts) — a dangling promise
+  // would only be kept alive per-fetch by waitUntil, not between attempts.
   manager.addEventListener('pageview', async event => {
     if (!hasRequiredProperties(event)) return
     const isEUEndpoint = !!event.payload.eu_data
     const eventData = getEventData(event, true)
-    sendEvent(eventData, isEUEndpoint)
+    await sendEvent(eventData, isEUEndpoint)
   })
 
   manager.addEventListener('event', async event => {
     if (!hasRequiredProperties(event)) return
     const isEUEndpoint = !!event.payload.eu_data
     const eventData = getEventData(event, false)
-    sendEvent(eventData, isEUEndpoint)
+    await sendEvent(eventData, isEUEndpoint)
   })
 
   manager.addEventListener('ecommerce', async event => {
@@ -161,7 +172,7 @@ export default async function (manager: Manager, settings: ComponentSettings) {
     const isEUEndpoint = !!event.payload.eu_data
     const ecomPayload = ecomDataMap(event)
     const eventData = getEventData(event, false, ecomPayload)
-    sendEvent(eventData, isEUEndpoint)
+    await sendEvent(eventData, isEUEndpoint)
   })
 
   // sendEvent function is the main functions to send a server side request
@@ -178,12 +189,42 @@ export default async function (manager: Manager, settings: ComponentSettings) {
       ? 'https://api.eu.amplitude.com/2/httpapi'
       : 'https://api2.amplitude.com/2/httpapi'
 
-    manager.fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    })
+    // LAKA-511: a fire-and-forget fetch silently drops the event on any
+    // 429/5xx or network error. Await the response and retry transient
+    // failures; only give up loudly.
+    const MAX_ATTEMPTS = 3
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const response = await manager.fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        })
+        if (response?.ok) return
+        if (response && response.status !== 429 && response.status < 500) {
+          // Permanent rejection — retrying the identical payload cannot succeed.
+          console.error(
+            `amplitude: event rejected (HTTP ${response.status}):`,
+            eventData.event_type
+          )
+          return
+        }
+        console.warn(
+          `amplitude: attempt ${attempt}/${MAX_ATTEMPTS} got HTTP ${response?.status}`
+        )
+      } catch (err) {
+        console.warn(
+          `amplitude: attempt ${attempt}/${MAX_ATTEMPTS} failed:`,
+          err
+        )
+      }
+      // ponytail: linear backoff; the whole loop blocks one Zaraz request, so keep it short
+      if (attempt < MAX_ATTEMPTS) {
+        await new Promise(resolve => setTimeout(resolve, 250 * attempt))
+      }
+    }
+    console.error('amplitude: event lost after retries:', eventData.event_type)
   }
 }
