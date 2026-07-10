@@ -205,9 +205,11 @@ export default async function (manager: Manager, settings: ComponentSettings) {
         if (response?.ok) return
         if (response && response.status !== 429 && response.status < 500) {
           // Permanent rejection — retrying the identical payload cannot succeed.
+          // Log the full event so a backfill can replay it (insert_id keeps
+          // replays idempotent on the Amplitude side).
           console.error(
             `amplitude: event rejected (HTTP ${response.status}):`,
-            eventData.event_type
+            JSON.stringify(eventData)
           )
           return
         }
@@ -225,6 +227,9 @@ export default async function (manager: Manager, settings: ComponentSettings) {
         await new Promise(resolve => setTimeout(resolve, 250 * attempt))
       }
     }
-    console.error('amplitude: event lost after retries:', eventData.event_type)
+    console.error(
+      'amplitude: event lost after retries:',
+      JSON.stringify(eventData)
+    )
   }
 }

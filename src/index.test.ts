@@ -259,11 +259,16 @@ describe('delivery retry (LAKA-511)', () => {
     expect(fetch).toHaveBeenCalledTimes(2)
   })
 
-  it('gives up after 3 attempts', async () => {
+  it('gives up after 3 attempts and logs the full event for backfill', async () => {
     const { listeners, fetch } = await setup()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     fetch.mockResolvedValue({ ok: false, status: 503 })
     await listeners.event(okEvent())
     expect(fetch).toHaveBeenCalledTimes(3)
+    const [msg, json] = error.mock.calls.at(-1)!
+    expect(msg).toContain('event lost after retries')
+    expect(JSON.parse(json).event_type).toBe('signup')
+    error.mockRestore()
   })
 
   it('does not retry a permanent 4xx rejection', async () => {
